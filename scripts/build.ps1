@@ -6,7 +6,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$OutputName = 'pwsh-guard-3.0.1.exe'
+    [string]$OutputName = 'pwsh-guard-3.0.2.exe'
 )
 
 $ErrorActionPreference = 'Stop'

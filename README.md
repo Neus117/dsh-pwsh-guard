@@ -4,7 +4,7 @@
 
 它是 2026-11-23 `~/.dsh` 被清空事故的补丁的推广版本（初版在 `D:\Coding\deepseek-harness-guard`，`pwsh-safe.exe` / `pwsh-safe-v2.exe`）。初版能拦，但有两处代价：**用全文匹配**（连"在文件里搜索 `Remove-Item` 这几个字"也会被拒），以及**完全不留记录**。v3 改掉这两点，并且可配置、可安装、可自测。
 
-- 当前版本：`3.0.1`
+- 当前版本：`3.0.2`
 - 只在 DSH 里生效；系统 `pwsh.exe` / `powershell.exe`、PATH、PowerShell profile 一律不动，用户自己的终端不受影响。
 
 ---
@@ -38,7 +38,7 @@ dsh 工具层  →  @deepseek-ai/dsh-pwsh-sandbox（沙箱执行器）
 
 ### 为什么改 profile 立即生效
 
-profile 的 patch 层由 loader 监视并重新应用（`dsh-pwsh-local` 的 `pwshPath` getter 每次读当前配置）。2026-11-27 实测：把 `pwshPath` 从 v2 切到 v3.0.1，**没有重启 DSH**，下一条命令的父进程就变成了 `pwsh-guard-3.0.1.exe`（`Win32_Process` 读数）。11-23 初版切换时同样是热生效。
+profile 的 patch 层由 loader 监视并重新应用（`dsh-pwsh-local` 的 `pwshPath` getter 每次读当前配置）。2026-11-27 实测：把 `pwshPath` 从 v2 切到 v3.0.2，**没有重启 DSH**，下一条命令的父进程就变成了 `pwsh-guard-3.0.2.exe`（`Win32_Process` 读数）。11-23 初版切换时同样是热生效。
 
 ---
 
@@ -108,7 +108,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File D:\Coding\dsh-pwsh-guard\scr
 powershell -NoProfile -ExecutionPolicy Bypass -File D:\Coding\dsh-pwsh-guard\scripts\test-guard.ps1
 
 # 3) 装进 profile：备份 cordis.patch.yml，把 pwsh-sandbox.pwshPath 指到本 exe
-powershell -NoProfile -ExecutionPolicy Bypass -File D:\Coding\dsh-pwsh-guard\scripts\install.ps1 -Exe D:\Coding\dsh-pwsh-guard\dist\pwsh-guard-3.0.1.exe
+powershell -NoProfile -ExecutionPolicy Bypass -File D:\Coding\dsh-pwsh-guard\scripts\install.ps1 -Exe D:\Coding\dsh-pwsh-guard\dist\pwsh-guard-3.0.2.exe
 ```
 
 `install.ps1` 自带 preflight：exe 跑不起来、放行不通、拦截不通，任何一项不过都不会改 profile。
@@ -145,7 +145,7 @@ dsh-pwsh-guard\
   scripts\test-guard.ps1   15 条行为矩阵，退出码 0/1
   scripts\install.ps1      preflight + 备份 + 改 profile
   scripts\uninstall.ps1    摘除 pwshPath 或整份恢复
-  dist\                    产物：pwsh-guard-3.0.1.exe + guard.rules.json + logs\
+  dist\                    产物：pwsh-guard-3.0.2.exe + guard.rules.json + logs\
 ```
 
 ## 6. 已知限制（务必读完再用）
@@ -156,12 +156,13 @@ dsh-pwsh-guard\
 4. **fail-closed。** `pwshPath` 不做存在性校验：exe 被删或损坏时，DSH 的 **所有** pwsh 命令都会失败。这是有意的（宁可不能用，也不要静默变成无守卫）。
 5. **不替代备份。** 它压的是"手滑"，不是"备份"。快照轮转（`D:\Coding\DeepSeek Harness Backup`）仍然是数据层的兜底。
 6. 规则是黑名单。新的破坏性动词（`Format-Volume`、`Remove-Partition` 等）默认不在里面，需要时往 `guard.rules.json` 加。
+7. **exe 与 `guard.rules.json` 必须成对升级。** 规则文件与 exe 同目录共享，新规则若用了旧 exe 不认识的写法，会当场把在用的旧 exe 弄坏（实测：3.0.1 不认识 `%LOCALAPPDATA%` 占位符，读到新规则后直接找不到 PowerShell，所有 pwsh 命令返回 4）。正确顺序：先 `install.ps1 -Exe <新 exe>` 换掉 `pwshPath`，再更新规则文件。
 
 ---
 
 ## 7. 与 11-23 初版的关系
 
-| | 初版 `deepseek-harness-guard`（v1/v2） | 本工具（v3.0.1） |
+| | 初版 `deepseek-harness-guard`（v1/v2） | 本工具（v3.0.2） |
 |---|---|---|
 | 接入方式 | `pwsh-sandbox.pwshPath` | 相同 |
 | 匹配 | 全文匹配 | 命令位置锚定（附带 `-File` 规则） |

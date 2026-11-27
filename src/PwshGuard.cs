@@ -276,7 +276,7 @@ internal static class Program
         return 0;
     }
 
-    internal const string Version = "3.0.1";
+    internal const string Version = "3.0.2";
 
     internal static string ExecutablePath()
     {
@@ -416,7 +416,15 @@ internal static class GuardConfigLoader
             if (roots != null) config.ProtectedRoots = roots;
 
             List<string> candidates = Strings(root, "pwshCandidates");
-            if (candidates != null) config.PwshCandidates = candidates;
+            if (candidates != null)
+            {
+                // %LOCALAPPDATA%-style tokens keep the JSON portable across machines.
+                for (int i = 0; i < candidates.Count; i++)
+                {
+                    candidates[i] = Environment.ExpandEnvironmentVariables(candidates[i]);
+                }
+                config.PwshCandidates = candidates;
+            }
 
             List<object> rules = Objects(root, "rules");
             if (rules != null)

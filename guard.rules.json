@@ -22,8 +22,8 @@
   "pwshCandidates": [
     "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
     "C:\\Program Files\\PowerShell\\7-preview\\pwsh.exe",
-    "C:\\Users\\Neus117\\AppData\\Local\\Microsoft\\WindowsApps\\Microsoft.PowerShell_8wekyb3d8bbwe\\pwsh.exe",
-    "C:\\Users\\Neus117\\AppData\\Local\\Microsoft\\WindowsApps\\pwsh.exe"
+    "%LOCALAPPDATA%\\Microsoft\\WindowsApps\\Microsoft.PowerShell_8wekyb3d8bbwe\\pwsh.exe",
+    "%LOCALAPPDATA%\\Microsoft\\WindowsApps\\pwsh.exe"
   ],
 
   "rules": [
