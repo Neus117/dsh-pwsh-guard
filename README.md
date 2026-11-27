@@ -2,9 +2,9 @@
 
 给 DeepSeek Harness（DSH）的 `pwsh` 工具加一道**删除前的目标检查**：不看你写了什么命令，只看这次操作**真正要删掉的路径**。删一个你点名的文件/子目录 → 放行；删用户目录、workspace 本身、盘根 → 拒绝，并把"为什么被拦、正确的做法是什么"用自然语言回给触发围栏的智能体。
 
-起因是 2026-11-23 `~/.dsh` 被清空（`$home` 撞上只读 `$HOME`）。初版和 3.x 靠**匹配命令文本**拦，代价是误报（搜这个词也被拦）且拦不住藏进脚本的删除。4.x 换了判据：判目标。
+起因是 2026-11-23 `~/.dsh` 被清空（`$home` 撞上只读 `$HOME`）。初版和 3.x 靠**匹配命令文本**拦，代价是误报（搜这个词也被拦）且拦不住藏进脚本的删除。1.x 换了判据：判目标。
 
-- 当前版本：`4.0.0`
+- 当前版本：`1.0.0`
 - 只在 DSH 里生效：系统 `pwsh.exe` / `powershell.exe`、PATH、PowerShell profile 一律不动，你自己的终端不受影响。
 
 ---
@@ -113,7 +113,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File D:\Coding\dsh-pwsh-guard\scr
 powershell -NoProfile -ExecutionPolicy Bypass -File D:\Coding\dsh-pwsh-guard\scripts\test-guard.ps1
 
 # 3) 装进 profile（preflight 通过才改 cordis.patch.yml，改前自动备份）
-powershell -NoProfile -ExecutionPolicy Bypass -File D:\Coding\dsh-pwsh-guard\scripts\install.ps1 -Exe D:\Coding\dsh-pwsh-guard\dist\pwsh-guard-4.0.0.exe
+powershell -NoProfile -ExecutionPolicy Bypass -File D:\Coding\dsh-pwsh-guard\scripts\install.ps1 -Exe D:\Coding\dsh-pwsh-guard\dist\pwsh-guard-1.0.0.exe
 ```
 
 在 DSH 里验证（三条按顺序发）：
@@ -148,7 +148,7 @@ dsh-pwsh-guard\
   scripts\test-guard.ps1  12 条行为矩阵（退出码 0/1）
   scripts\install.ps1     preflight + 备份 + 改 profile
   scripts\uninstall.ps1   摘除 pwshPath 或整份恢复
-  dist\                   pwsh-guard-4.0.0.exe + guard.shim.ps1 + guard.config.json + logs\
+  dist\                   pwsh-guard-1.0.0.exe + guard.shim.ps1 + guard.config.json + logs\
 ```
 
 ## 7. 已知限制
@@ -168,6 +168,8 @@ dsh-pwsh-guard\
 
 | 版本 | 判据 | 反馈 | 结局 |
 |---|---|---|---|
-| v1 / v2（2026-11-23，`D:\Coding\deepseek-harness-guard`） | 命令文本正则黑名单 | 一行 `blocked …`，退出码 3 | 能拦，但误报多、无日志；保留作回滚 |
-| v3.x（2026-11-27 上午） | 命令文本锚定匹配 + 保护根 + 放行标记 | 两行，退出码 3 | 消掉误报、加了审计，但"藏进脚本"仍拦不住 |
-| **v4.0.0（现行）** | **解析后的删除目标**（通配符 / 保护根 / 数量） | 五行自然语言 + 退出码 86 | 无黑名单、无正则，脚本内删除同样受管 |
+| 中间版（2026-11-23，`D:\Coding\deepseek-harness-guard\pwsh-safe.exe` / `pwsh-safe-v2.exe`） | 命令文本正则黑名单 | 一行 `blocked …`，退出码 3 | 能拦，但误报多、无日志；保留作回滚 |
+| 中间版 3.0.x（2026-11-27 上午） | 命令文本锚定匹配 + 保护根 + 放行标记 | 两行，退出码 3 | 消掉误报、加了审计，但"藏进脚本"仍拦不住 |
+| **1.0.0（现行）** | **解析后的删除目标**（通配符 / 保护根 / 数量） | 五行自然语言 + 退出码 86 | 无黑名单、无正则，脚本内删除同样受管 |
+
+> 版本号在判定方式重写后对外重置为 `1.0.0`；中间迭代用过的 3.0.x / 4.0.0 只是工作版本，不对外。

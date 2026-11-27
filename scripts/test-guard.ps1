@@ -1,6 +1,6 @@
 #requires -Version 5.1
 <#
-    Behaviour matrix for dsh-pwsh-guard 4.x.
+    Behaviour matrix for dsh-pwsh-guard 1.x.
 
     Every case runs the guard exe exactly the way DSH runs it:
         <exe> -NoLogo -NoProfile -NonInteractive -Command <command>
@@ -12,7 +12,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$Exe = (Join-Path (Split-Path -Parent $PSScriptRoot) 'dist\pwsh-guard-4.0.0.exe')
+    [string]$Exe = (Join-Path (Split-Path -Parent $PSScriptRoot) 'dist\pwsh-guard-1.0.0.exe')
 )
 
 $ErrorActionPreference = 'Stop'

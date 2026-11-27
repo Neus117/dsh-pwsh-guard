@@ -1,6 +1,6 @@
 {
-  "_comment": "dsh-pwsh-guard 4.x. The exe injects guard.shim.ps1 in front of every DSH pwsh command and passes these values through environment variables. No patterns, no verb blacklist: the shim judges the resolved delete targets.",
-  "version": 4,
+  "_comment": "dsh-pwsh-guard 1.x. The exe injects guard.shim.ps1 in front of every DSH pwsh command and passes these values through environment variables. No patterns, no verb blacklist: the shim judges the resolved delete targets.",
+  "version": 1,
 
   "shimPath": "guard.shim.ps1",
   "logPath": "logs\\guard.jsonl",

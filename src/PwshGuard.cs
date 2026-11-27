@@ -5,7 +5,7 @@ using System.IO;
 using System.Text;
 using System.Web.Script.Serialization;
 
-// dsh-pwsh-guard 4.x — DSH's PowerShell entry point.
+// dsh-pwsh-guard 1.x — DSH's PowerShell entry point.
 //
 // DSH runs every pwsh command through `@deepseek-ai/dsh-pwsh-sandbox`, whose
 // `pwshPath` config points at this exe. DSH therefore always calls us with the
@@ -43,7 +43,7 @@ internal sealed class GuardSettings
 
 internal static class Program
 {
-    internal const string Version = "4.0.0";
+    internal const string Version = "1.0.0";
     private const string Tag = "[pwsh-guard]";
     private const int ExitNoPwsh = 4;
     private const int ExitInternal = 5;
