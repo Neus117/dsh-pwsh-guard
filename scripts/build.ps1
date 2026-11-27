@@ -6,18 +6,20 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$OutputName = 'pwsh-guard-3.0.2.exe'
+    [string]$OutputName = 'pwsh-guard-4.0.0.exe'
 )
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $source = Join-Path $root 'src\PwshGuard.cs'
-$rules = Join-Path $root 'guard.rules.json'
+$rules = Join-Path $root 'guard.config.json'
+$shim = Join-Path $root 'guard.shim.ps1'
 $dist = Join-Path $root 'dist'
 $exe = Join-Path $dist $OutputName
 
 if (-not (Test-Path -LiteralPath $source)) { throw "source not found: $source" }
-if (-not (Test-Path -LiteralPath $rules)) { throw "rules not found: $rules" }
+if (-not (Test-Path -LiteralPath $rules)) { throw "config not found: $rules" }
+if (-not (Test-Path -LiteralPath $shim)) { throw "shim not found: $shim" }
 
 $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 if (-not (Test-Path -LiteralPath $csc)) {
@@ -41,7 +43,8 @@ if (Test-Path -LiteralPath $exe) {
 & $csc /nologo /codepage:65001 /target:exe /optimize+ /out:$exe /r:System.Web.Extensions.dll $source
 if ($LASTEXITCODE -ne 0) { throw "csc failed with exit code $LASTEXITCODE" }
 
-Copy-Item -LiteralPath $rules -Destination (Join-Path $dist 'guard.rules.json') -Force
+Copy-Item -LiteralPath $rules -Destination (Join-Path $dist 'guard.config.json') -Force
+Copy-Item -LiteralPath $shim -Destination (Join-Path $dist 'guard.shim.ps1') -Force
 
 $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
 Write-Output "built  $exe"

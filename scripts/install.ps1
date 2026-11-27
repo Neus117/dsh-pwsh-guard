@@ -18,6 +18,10 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if (-not (Test-Path -LiteralPath $Exe)) { throw "guard exe not found: $Exe (run scripts\build.ps1 first)" }
+$shim = Join-Path (Split-Path -Parent $Exe) 'guard.shim.ps1'
+$cfg = Join-Path (Split-Path -Parent $Exe) 'guard.config.json'
+if (-not (Test-Path -LiteralPath $shim)) { throw "shim not found next to the exe: $shim" }
+if (-not (Test-Path -LiteralPath $cfg)) { throw "config not found next to the exe: $cfg" }
 $Exe = (Resolve-Path -LiteralPath $Exe).Path
 
 $patch = Join-Path $ProfileDir 'cordis.patch.yml'
@@ -35,9 +39,9 @@ if ($LASTEXITCODE -ne 0 -or (($allowOut | Out-String) -notmatch 'install-allow-o
     throw 'guard exe did not forward an allowed command'
 }
 
-$blockCmd = 'Remove-Item -LiteralPath "C:\never-exists\guard-install-probe" -Recurse -Force -ErrorAction SilentlyContinue; Write-Output "SHOULD-NOT-RUN"'
+$blockCmd = 'Remove-Item -LiteralPath $env:USERPROFILE -Recurse -Force -WhatIf; Write-Output "SHOULD-NOT-RUN"'
 $blockOut = & $Exe -NoLogo -NoProfile -NonInteractive -Command $blockCmd 2>&1
-if ($LASTEXITCODE -ne 3) { throw "guard exe did not block a delete (exit $LASTEXITCODE)" }
+if ($LASTEXITCODE -ne 86) { throw "guard exe did not refuse a delete (exit $LASTEXITCODE)" }
 if (($blockOut | Out-String) -match 'SHOULD-NOT-RUN') { throw 'blocked command was executed anyway' }
 Write-Output 'preflight ok'
 
@@ -101,7 +105,7 @@ Write-Output "pwshPath  : $Exe"
 Write-Output ''
 Write-Output 'Now verify in DSH (the profile is re-applied live; no restart needed):'
 Write-Output '  1) ask DSH: Write-Output guard-live-ok                       -> should print guard-live-ok'
-Write-Output '  2) ask DSH: Remove-Item -LiteralPath C:\nope -Recurse -Force  -> should be BLOCKED (exit code 3)'
+Write-Output '  2) ask DSH: Remove-Item -LiteralPath $env:USERPROFILE -Recurse -WhatIf  -> should be REFUSED (exit code 86)'
 Write-Output '  3) read   : dist\logs\guard.jsonl                             -> both decisions must be logged'
 Write-Output ''
 Write-Output "Rollback  : copy '$backup' over '$patch'"

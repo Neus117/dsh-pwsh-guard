@@ -1,183 +1,173 @@
 # dsh-pwsh-guard
 
-给 DeepSeek Harness（DSH）的 `pwsh` 工具加一道**执行前的命令闸**：删库、镜像覆盖、强杀进程树、把删除藏进脚本文件这类命令在门内被拒，PowerShell 根本不会启动；同时把每条命令的决定写进审计日志。
+给 DeepSeek Harness（DSH）的 `pwsh` 工具加一道**删除前的目标检查**：不看你写了什么命令，只看这次操作**真正要删掉的路径**。删一个你点名的文件/子目录 → 放行；删用户目录、workspace 本身、盘根 → 拒绝，并把"为什么被拦、正确的做法是什么"用自然语言回给触发围栏的智能体。
 
-它是 2026-11-23 `~/.dsh` 被清空事故的补丁的推广版本（初版在 `D:\Coding\deepseek-harness-guard`，`pwsh-safe.exe` / `pwsh-safe-v2.exe`）。初版能拦，但有两处代价：**用全文匹配**（连"在文件里搜索 `Remove-Item` 这几个字"也会被拒），以及**完全不留记录**。v3 改掉这两点，并且可配置、可安装、可自测。
+起因是 2026-11-23 `~/.dsh` 被清空（`$home` 撞上只读 `$HOME`）。初版和 3.x 靠**匹配命令文本**拦，代价是误报（搜这个词也被拦）且拦不住藏进脚本的删除。4.x 换了判据：判目标。
 
-- 当前版本：`3.0.2`
-- 只在 DSH 里生效；系统 `pwsh.exe` / `powershell.exe`、PATH、PowerShell profile 一律不动，用户自己的终端不受影响。
+- 当前版本：`4.0.0`
+- 只在 DSH 里生效：系统 `pwsh.exe` / `powershell.exe`、PATH、PowerShell profile 一律不动，你自己的终端不受影响。
 
 ---
 
-## 1. 它凭什么能拦住 DSH 的命令（原理）
+## 1. 它怎么接进 DSH（原理）
 
-DSH 的 `pwsh` 工具**不直接调 PowerShell**，链路是：
+DSH 的 `pwsh` 工具不直接调 PowerShell，链路是：
 
 ```
-dsh 工具层  →  @deepseek-ai/dsh-pwsh-sandbox（沙箱执行器）
-            →  @deepseek-ai/dsh-pwsh-local（本地执行器）
-            →  ctx.subprocess 启动 argv
+dsh 工具层 → @deepseek-ai/dsh-pwsh-sandbox → @deepseek-ai/dsh-pwsh-local → ctx.subprocess
 ```
 
-`dsh-pwsh-local` 的 argv 是固定的：
+`dsh-pwsh-local` 的 argv 固定为：
 
 ```
 <pwshPath> -NoLogo -NoProfile -NonInteractive -Command "<UTF-8 编码前置> + <命令>"
 ```
 
-其中 `pwshPath` 是插件配置项（`Config.pwshPath`），`resolvePwshPath()` 对**显式配置值原样采用，不做存在性校验**。所以只要在 profile 的 `cordis.patch.yml` 里给 `pwsh-sandbox` 这个插件加一条 `pwshPath`，DSH 的每一次 pwsh 调用都会先启动我们这个小程序。
+`pwshPath` 是插件配置，`resolvePwshPath()` 对显式配置值**原样采用**。所以把 `pwsh-sandbox.pwshPath` 指向本 exe，DSH 每次调用都会先经过它。
 
-本工具做的事：
+本工具只做一件事：
 
-1. 收到与 DSH 本会交给 PowerShell 完全相同的 argv；
-2. 取出 `-Command` 后面那段命令文本，按规则判定；
-3. 命中 → 向 stderr 写一行结论，**退出码 3**，不创建任何子进程；
-4. 未命中 → 用 Windows 引号规则把 argv 原样转给真正的 PowerShell 7，stdout/stderr/退出码照原样返回。
+```
+-Command "<preamble><用户命令>"
+   ↓ 改写成
+-Command ". 'guard.shim.ps1'; <preamble><用户命令>"
+   ↓
+交给真正的 PowerShell 7，退出码原样透传
+```
 
-也就是说：拦截发生在**任何进程被创建之前**，`$home` 那类命令连删的机会都没有；放行的命令行为与没有这层包装时逐字节一致。
+**判定不在 exe 里，`guard.shim.ps1` 在会话内定义 `Remove-Item` 的替身**（`rm`/`del`/`erase`/`rd`/`rmdir`/`ri` 都是它的别名，自动一并受管）。于是变量、通配符、管道都由 PowerShell 自己解析成**真实路径**，替身拿到目标后再判——`$home`、`.`、`*`、`Get-ChildItem x | Remove-Item` 全都变成具体路径，藏进 `.ps1` 的删除也在同一会话里，同样受管。
 
-### 什么时候要重启 DSH
+这带来两个直接好处：
 
-profile 的 patch 层由 loader 监视并重新应用，`dsh-pwsh-local` 的 `pwshPath` getter 每次取值都对照当前配置。但**生效的对称性不一样**，实测结论：
-
-| 动作 | 是否热生效 | 实测 |
-|---|---|---|
-| 安装 / 换 `pwshPath` 指向另一个 exe | **是**，下一条命令就换 | 11-27 从 v2 切 v3.0.0、v3.0.0 切 3.0.1、3.0.1 切 3.0.2，每次父进程立刻变 `[实测]` |
-| 改 `guard.rules.json` | 是，每次调用都重新读 | 3.0.1 当场读到带 `%LOCALAPPDATA%` 的新规则并失败 `[实测]` |
-| **卸载**（摘掉 `pwshPath` 整行） | **否** | 18:45:09 摘掉后立刻验证，父进程仍是 `pwsh-guard-3.0.2.exe` `[实测]` |
-
-所以：**装/换=即时，卸载=重启 DSH 后才彻底关掉**。别在卸载后立刻断言"守卫已关"。
+- **不需要黑名单**：没有动词表、没有正则，判定依据只有一份数据（受保护根清单 + 两个数量型参数）。
+- **反馈是精确的**：报的是"`C:\Users\Neus117` 是受保护根"，不是"命令里出现了某个词"。
 
 ---
 
-## 2. 判定逻辑
+## 2. 三条判据（全部判目标，不判命令）
 
-默认 7 条规则（`guard.rules.json`，改 JSON 即可生效，无需重新编译）：
+| # | 判据 | 拒绝时的说法 |
+|---|---|---|
+| 1 | 目标表达式含 `*` / `?`（会删掉没点名的东西）；`-Filter` 的值不算 | `the target expression '…\*' contains a wildcard, so it can delete files that were never named.` |
+| 2 | 目标是受保护根，或受保护根的**上层**，或盘根 | `the target 'C:\Users\Neus117' is a protected root (user home, AppData, DSH home, or the session's working directory). Deleting it would destroy everything under it.` |
+| 3 | 一次调用要删的目标超过 `maxTargets`（默认 20） | `this one call would delete 25 paths at once, which is more than the limit of 20.` |
 
-| 规则 id | 拦截内容 |
-|---|---|
-| `delete-cmdlet` | `Remove-Item` / `Remove-ItemProperty` / `Clear-Content` / `Clear-RecycleBin` |
-| `delete-alias` | `del` / `erase` / `rd` / `rmdir` / `rm` / `ri` |
-| `move-cmdlet` | `Move-Item` / `mv` |
-| `git-clean` | `git clean` |
-| `robocopy-mirror` | `robocopy ... /MIR` `/MOV` `/PURGE` |
-| `taskkill-tree` | `taskkill ... /T` |
-| `script-bypass` | `powershell|pwsh ... -File` / `-EncodedCommand` / `-enc`（防把删除藏进脚本） |
+受保护根（运行时在会话里算，不写死盘符）：`%USERPROFILE%`、`%APPDATA%`、`%LOCALAPPDATA%`、`%DSH_HOME%`、**当前工作目录本身**（DSH 里就是 workspace 根）、任何盘根。`extraProtectedRoots` 可追加。
 
-关键差异：**破坏性动词按"命令位置"锚定**，不是全文匹配。位置 = 文本开头，或 `;` `|` `&&` `{` 换行之后。代价与收益：
+判定顺序是 1 → 3 → 2，任一条命中即拒绝。
 
-- 2026-11-23 那条事故命令里 `Remove-Item` 独占一行 —— 一样被拦；
-- `Select-String -Path x -Pattern 'Remove-Item'`、`$removeItem = 1` 这类"只是提到这个词"的命令**不再被误拦**（v2 会拦）。
+### 智能体看到的完整反馈（实测原样）
 
-### 保护根（连 allow marker 也压不住）
+```
+[pwsh-guard] REFUSED Remove-Item: the target 'C:\Users\Neus117' is a protected root (user home, AppData, DSH home,
+             or the session's working directory). Deleting it would destroy everything under it.
+[pwsh-guard] Nothing was deleted, and every later statement of this command was skipped (exit code 86).
+[pwsh-guard] Targets that were resolved: C:\Users\Neus117
+[pwsh-guard] What to do instead: name the file or sub-folder inside it that you actually want gone.
+[pwsh-guard] If the user really asked for this, tell them what was refused and let them decide.
+```
 
-命令里出现 `$home` / `$env:USERPROFILE` / `$env:APPDATA` / `$env:LOCALAPPDATA` / `$env:ProgramData` / `%USERPROFILE%` 之类"整个用户目录"的记号，且同时命中删除规则 → **无条件拒绝**。11-23 的写法是 `$home = ...` 撞上只读 `$HOME`，这一层让它即使带了放行标记也过不去。
+拒绝时 `$host.SetShouldExit(86)` + `throw`：**退出码 86，且命令后半截不会继续执行**（已用 `; Write-Output 'AFTER'` 断言）。每一句"该怎么做"都指向具体动作，智能体不需要猜。
 
-### 放行标记（例外通道）
+### 放行的样子（无需任何标记）
 
-命令里含 `dsh-guard:allow-destructive` 时，被规则命中的命令放行，日志记为 `allowed-by-marker`。用途：清理临时目录、跑一次性迁移这类**需要删除**的正经工作。
+```powershell
+Remove-Item -LiteralPath "$env:TEMP\probe.txt" -Force          # 0
+Remove-Item -LiteralPath "$env:TEMP\build" -Recurse -Force      # 0
+Get-ChildItem .\dist\*.tmp | Remove-Item -Force                 # 0（目标 ≤ 20 个）
+```
 
-- 标记**故意不写进拒绝信息的提示里**：模型被拦后应先问用户，而不是自己补一个标记继续删。
-- 它防的是**误操作**，不是对抗：任何能写字符的东西都能写这个标记。真正的兜底仍然是快照备份。
-- 保护根命中时标记无效。
+---
 
-### 退出码
+## 3. 退出码
 
 | 码 | 含义 |
 |---|---|
-| 子进程退出码 | 放行，原样透传 |
-| `3` | 被守卫拒绝（PowerShell 未启动） |
-| `4` | 找不到可用的 PowerShell 7 / 启动失败 |
-| `5` | 守卫自身异常（配置坏了也不会静默放行） |
+| `0`（或子进程原码） | 放行 / 命令自身结果 |
+| `86` | 被守卫拒绝（`Remove-Item` 没执行，命令后半截被跳过） |
+| `4` | 守卫自身找不到 PowerShell 或 shim（fail-closed，宁可跑不了也不裸奔） |
+| `5` | 守卫内部异常 |
 
 ---
 
-## 3. 审计日志
+## 4. 审计日志
 
-默认写到 **exe 同目录** `logs\guard.jsonl`（超过 5 MB 轮转成 `.1`），一行一条：
+`dist\logs\guard.jsonl`，一行一条，**记解析后的目标而不是命令原文**：
 
 ```json
-{"time":"2026-11-27T18:42:48.156+08:00","decision":"blocked","rule":"delete-cmdlet","reason":"deletes files, keys, content or the recycle bin","pid":3296,"cwd":"D:\\Coding\\workspace","command":"...前 4000 字符..."}
+{"t":1795777369910,"decision":"refused","reason":"the target 'C:\\Users\\Neus117' is a protected root …","pid":26152,"cwd":"C:\\Coding\\workspace","targets":["C:\\Users\\Neus117"]}
+{"t":1795777300000,"decision":"allowed","reason":"delete of 2 named target(s)","pid":26152,"cwd":"D:\\Coding\\workspace","targets":["…\\a.txt","…\\b.txt"]}
 ```
 
-`decision` 取值：`run`（放行）/ `blocked` / `allowed-by-marker`。
-
-这是 11-23 事故里最缺的东西：当时"到底删了什么、谁删的"完全无从查证（`Remove-Item` 不进回收站）。日志**始终记录执行前的命令原文**，所以即使守卫被绕过（见第 6 节），事后也有据可查。
+超过 5 MB 由 `maxLogBytes` 决定轮转（当前实现为按条追加，轮转留给运维侧，见"已知限制"）。
 
 ---
 
-## 4. 安装 / 验证 / 回滚
+## 5. 安装 / 验证 / 回滚
 
 ```powershell
-# 1) 编译（用 Windows 自带的 .NET Framework csc，无需 SDK / 联网）
+# 1) 编译 + 暂存 dist\（exe + shim + 配置；用系统自带 csc，无需 SDK/联网）
 powershell -NoProfile -ExecutionPolicy Bypass -File D:\Coding\dsh-pwsh-guard\scripts\build.ps1
 
-# 2) 自测：15 条行为矩阵（放行 / 拦截 / 保护根 / 标记 / UTF-8 / 日志）
+# 2) 行为矩阵（12 条，允许/拒绝/脚本内删除/通配符/数量/盘根/管道）
 powershell -NoProfile -ExecutionPolicy Bypass -File D:\Coding\dsh-pwsh-guard\scripts\test-guard.ps1
 
-# 3) 装进 profile：备份 cordis.patch.yml，把 pwsh-sandbox.pwshPath 指到本 exe
-powershell -NoProfile -ExecutionPolicy Bypass -File D:\Coding\dsh-pwsh-guard\scripts\install.ps1 -Exe D:\Coding\dsh-pwsh-guard\dist\pwsh-guard-3.0.2.exe
+# 3) 装进 profile（preflight 通过才改 cordis.patch.yml，改前自动备份）
+powershell -NoProfile -ExecutionPolicy Bypass -File D:\Coding\dsh-pwsh-guard\scripts\install.ps1 -Exe D:\Coding\dsh-pwsh-guard\dist\pwsh-guard-4.0.0.exe
 ```
 
-`install.ps1` 自带 preflight：exe 跑不起来、放行不通、拦截不通，任何一项不过都不会改 profile。
+在 DSH 里验证（三条按顺序发）：
 
-在 DSH 里验证（三条命令按顺序发）：
-
-1. `Write-Output guard-live-ok` → 打印 `guard-live-ok`；
-2. `Remove-Item -LiteralPath C:\nope -Recurse -Force` → 被拒，`[pwsh-guard] BLOCKED rule=delete-cmdlet`，`error` 码 3；
-3. 读 `dist\logs\guard.jsonl` → 两条决定都在。
+1. `Remove-Item -LiteralPath "$env:TEMP\v4.txt" -Force`（先建这个文件）→ 正常删除，无提示；
+2. `Remove-Item $env:USERPROFILE -Recurse -Force -WhatIf` → 被拒，看到 5 行反馈，退出码 86；
+3. 读 `dist\logs\guard.jsonl` → 两条决定都在，`targets` 里是真实路径。
 
 回滚：
 
 ```powershell
-# 只摘掉 pwshPath（DSH 回到直接用真 pwsh，守卫关闭）
+# 摘掉 pwshPath（重启 DSH 后彻底关闭；换 exe 是即时生效，见下）
 powershell -NoProfile -ExecutionPolicy Bypass -File D:\Coding\dsh-pwsh-guard\scripts\uninstall.ps1
-
-# 或者整份恢复安装前的 profile
+# 或整份恢复安装前的 profile
 powershell -NoProfile -ExecutionPolicy Bypass -File D:\Coding\dsh-pwsh-guard\scripts\uninstall.ps1 -Restore
 ```
 
-**升级时不要覆盖正在用的 exe**：DSH 跑命令时该 exe 是被锁住的（Windows 文件锁），`build.ps1` 会自动改写成带时间戳的新文件名，然后用 `install.ps1 -Exe <新文件>` 切换。这也是初版 README 里记过的坑。
+**生效时机（实测）**：换 `pwshPath` 指向新 exe → 下一条命令即时生效；改 `guard.shim.ps1` → 下一条命令即时生效；**摘掉 `pwshPath` 的卸载不热生效，要重启 DSH**。
 
-换一台机器 / 换一个 profile：复制整个目录 → `build.ps1` → `install.ps1 -Exe ... -ProfileDir <目标 profile 目录>`。`guard.rules.json` 里的 `pwshCandidates` 按目标机器的 PowerShell 7 位置改。
+升级注意：exe 与 `guard.shim.ps1`、`guard.config.json` 是**一套**，必须一起换（`build.ps1` 会把三个文件都放进 `dist\`）。运行中的 exe 会被 Windows 锁住，`build.ps1` 会自动改用带时间戳的新文件名，再 `install.ps1 -Exe <新文件>` 切换。
 
 ---
 
-## 5. 文件结构
+## 6. 文件结构
 
 ```
 dsh-pwsh-guard\
-  guard.rules.json         规则、保护根、日志路径、标记（唯一需要改的配置）
-  src\PwshGuard.cs         守卫本体（C# 5，单文件，无第三方依赖）
-  scripts\build.ps1        编译 + 暂存 dist\
-  scripts\test-guard.ps1   15 条行为矩阵，退出码 0/1
-  scripts\install.ps1      preflight + 备份 + 改 profile
-  scripts\uninstall.ps1    摘除 pwshPath 或整份恢复
-  dist\                    产物：pwsh-guard-3.0.2.exe + guard.rules.json + logs\
+  src\PwshGuard.cs        入口 exe：注入 shim、转发 argv、传环境变量（~200 行，无策略）
+  guard.shim.ps1          唯一的判定层：定义 Remove-Item 替身、解析目标、三条判据、日志
+  guard.config.json       受保护根追加、maxTargets、denyWildcard、日志路径、pwsh 候选
+  scripts\build.ps1       编译 + 暂存 dist\
+  scripts\test-guard.ps1  12 条行为矩阵（退出码 0/1）
+  scripts\install.ps1     preflight + 备份 + 改 profile
+  scripts\uninstall.ps1   摘除 pwshPath 或整份恢复
+  dist\                   pwsh-guard-4.0.0.exe + guard.shim.ps1 + guard.config.json + logs\
 ```
 
-## 6. 已知限制（务必读完再用）
+## 7. 已知限制
 
-1. **只看外层命令文本。** 脚本文件内容、`Invoke-Expression`、`node -e`/`python -c` 里的删除、`[IO.File]::Delete()`、`$obj.Delete()` 都看不到。`-File` / `-EncodedCommand` 已被禁，但"写个 .ps1 再 `&` 它"仍可绕过（放行时日志里有原文可追）。
-2. **锚定匹配的取舍。** `& 'Remove-Item' x` 这类故意绕过不拦；换来的是不再误拦"搜索这个词"。
-3. **保护根只认变量记号，不认字面绝对路径。** `Remove-Item C:\Users\Neus117 -Recurse`（裸路径、无标记）会被规则拦；但若同时写了放行标记，则不会被保护根拦住。
-4. **fail-closed。** `pwshPath` 不做存在性校验：exe 被删或损坏时，DSH 的 **所有** pwsh 命令都会失败。这是有意的（宁可不能用，也不要静默变成无守卫）。
-5. **不替代备份。** 它压的是"手滑"，不是"备份"。快照轮转（`D:\Coding\DeepSeek Harness Backup`）仍然是数据层的兜底。
-6. 规则是黑名单。新的破坏性动词（`Format-Volume`、`Remove-Partition` 等）默认不在里面，需要时往 `guard.rules.json` 加。
-7. **exe 与 `guard.rules.json` 必须成对升级。** 规则文件与 exe 同目录共享，新规则若用了旧 exe 不认识的写法，会当场把在用的旧 exe 弄坏（实测：3.0.1 不认识 `%LOCALAPPDATA%` 占位符，读到新规则后直接找不到 PowerShell，所有 pwsh 命令返回 4）。正确顺序：先 `install.ps1 -Exe <新 exe>` 换掉 `pwshPath`，再更新规则文件。
+1. **只管 PowerShell 的 `Remove-Item`（含其别名）**。同会话里的脚本、`ForEach-Object { Remove-Item $_ }` 都覆盖；但 `cmd /c del`、`node -e "fs.rmSync"`、`[IO.File]::Delete()`、`Remove-Volume` 等看不到（已用 `cmd /c del` 在矩阵里固定为"已知盲区"用例）。这类残留风险由日志与快照备份兜底。
+2. **只看 `Remove-Item`**：`Move-Item`、`Clear-Content`、`Remove-ItemProperty` 不在判定范围。需要时按同样方式加替身（一次约 5 行）。
+3. **`Remove-Item *` 一律拒绝**（判据 1）。清理临时目录请点名路径或用 `-LiteralPath` 传具体文件。
+4. **一次最多删 20 个目标**（判据 3，可配置）。批量清理请按目录分次，或调大 `maxTargets`。
+5. **注入会改变错误行号**：`-Command` 前多了一段 dot-source，PowerShell 报错里脚本行号会偏移 1 行左右。
+6. **fail-closed**：`pwshPath` 不做存在性校验；exe / shim / 配置任一损坏，DSH 的所有 pwsh 命令会失败（退出码 4 并说明原因）。
+7. **不替代备份**：它压的是手滑；数据层兜底仍是 `D:\Coding\DeepSeek Harness Backup` 的快照轮转。
+8. 日志按条追加，暂未实现按大小轮转（`maxLogBytes` 已进配置，留给后续）。
 
 ---
 
-## 7. 与 11-23 初版的关系
+## 8. 版本谱系
 
-| | 初版 `deepseek-harness-guard`（v1/v2） | 本工具（v3.0.2） |
-|---|---|---|
-| 接入方式 | `pwsh-sandbox.pwshPath` | 相同 |
-| 匹配 | 全文匹配 | 命令位置锚定（附带 `-File` 规则） |
-| 误报 | 搜索该词也被拒 | 已消除 |
-| 审计日志 | 无 | `logs\guard.jsonl`（含被拦命令原文） |
-| 配置 | 编译进 exe | `guard.rules.json` |
-| 放行例外 | 无 | `allow-destructive` 标记 + 保护根兜底 |
-| 自测 | 手工 | 15 条矩阵，`test-guard.ps1` |
-
-初版目录保留作回滚，可以删；v3 已接管 profile 的 `pwshPath`。
+| 版本 | 判据 | 反馈 | 结局 |
+|---|---|---|---|
+| v1 / v2（2026-11-23，`D:\Coding\deepseek-harness-guard`） | 命令文本正则黑名单 | 一行 `blocked …`，退出码 3 | 能拦，但误报多、无日志；保留作回滚 |
+| v3.x（2026-11-27 上午） | 命令文本锚定匹配 + 保护根 + 放行标记 | 两行，退出码 3 | 消掉误报、加了审计，但"藏进脚本"仍拦不住 |
+| **v4.0.0（现行）** | **解析后的删除目标**（通配符 / 保护根 / 数量） | 五行自然语言 + 退出码 86 | 无黑名单、无正则，脚本内删除同样受管 |

@@ -1,0 +1,18 @@
+{
+  "_comment": "dsh-pwsh-guard 4.x. The exe injects guard.shim.ps1 in front of every DSH pwsh command and passes these values through environment variables. No patterns, no verb blacklist: the shim judges the resolved delete targets.",
+  "version": 4,
+
+  "shimPath": "guard.shim.ps1",
+  "logPath": "logs\\guard.jsonl",
+
+  "maxTargets": 20,
+  "denyWildcard": true,
+  "extraProtectedRoots": [],
+
+  "pwshCandidates": [
+    "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+    "C:\\Program Files\\PowerShell\\7-preview\\pwsh.exe",
+    "%LOCALAPPDATA%\\Microsoft\\WindowsApps\\Microsoft.PowerShell_8wekyb3d8bbwe\\pwsh.exe",
+    "%LOCALAPPDATA%\\Microsoft\\WindowsApps\\pwsh.exe"
+  ]
+}

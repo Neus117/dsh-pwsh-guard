@@ -1,5 +1,6 @@
 dist/logs/
 dist/*.exe
+dist/guard.config.json
+dist/guard.shim.ps1
 *.bak-pwsh-guard-*
 *.bak-*
-dist/guard.rules.json
