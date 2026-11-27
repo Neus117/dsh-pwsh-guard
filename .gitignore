@@ -1,0 +1,5 @@
+dist/logs/
+dist/*.exe
+*.bak-pwsh-guard-*
+*.bak-*
+dist/guard.rules.json
